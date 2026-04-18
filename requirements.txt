@@ -1,0 +1,11 @@
+python-gitlab>=4.4.0
+pyyaml>=6.0
+python-dotenv>=1.0.0
+tenacity>=8.2.0
+
+# LLM SDKs — you only need the one(s) matching the API key(s) you provide.
+# They are imported lazily, so missing SDKs are fine as long as you're not
+# using that provider. Remove any line you don't want installed.
+anthropic>=0.39.0
+openai>=1.50.0
+google-genai>=0.3.0

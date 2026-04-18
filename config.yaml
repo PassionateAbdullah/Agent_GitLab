@@ -1,0 +1,68 @@
+# Files that count as an existing README (case-insensitive match on the repo root).
+readme_filenames:
+  - README.md
+  - README.rst
+  - README.txt
+  - README
+  - readme.md
+  - Readme.md
+
+# Project analysis
+analysis:
+  # Files we prioritize reading to understand the project (root-level first, then common src entry points).
+  priority_files:
+    - package.json
+    - pyproject.toml
+    - setup.py
+    - setup.cfg
+    - requirements.txt
+    - Pipfile
+    - go.mod
+    - Cargo.toml
+    - pom.xml
+    - build.gradle
+    - composer.json
+    - Gemfile
+    - Dockerfile
+    - docker-compose.yml
+    - .gitlab-ci.yml
+    - Makefile
+    - main.py
+    - app.py
+    - index.js
+    - main.go
+    - src/main.rs
+
+  # Max files to fetch per project (keeps Claude prompts compact and API calls cheap).
+  max_files: 12
+  # Max bytes to read from any single file.
+  max_bytes_per_file: 8000
+  # Total byte budget for the context sent to Claude.
+  total_context_budget: 60000
+
+# Skip rules
+skip:
+  archived: true       # skip archived projects
+  empty_repo: true     # skip projects with no default branch / no commits
+  forks: false         # set true to skip forks
+  min_commits: 0       # skip projects below this commit count (0 = never skip on commits)
+
+# Commit
+commit:
+  message: "docs: add auto-generated README"
+  branch_strategy: default   # 'default' commits to default branch; 'mr' opens a merge request from a feature branch
+  author_name: "README Agent"
+  author_email: "readme-agent@localhost"
+
+# Runtime
+runtime:
+  # Claude call tuning
+  model_max_tokens: 2000
+  # Pause between projects to be gentle on GitLab (seconds)
+  per_project_delay: 1.0
+  # Retries for transient failures
+  max_retries: 3
+
+logging:
+  level: INFO
+  file: logs/agent.log
