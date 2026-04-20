@@ -23,6 +23,14 @@ class LLMNotConfigured(RuntimeError):
     """
 
 
+class GitLabNotConfigured(RuntimeError):
+    """Raised when .env has no GitLab token (and optionally no URL).
+
+    Lets main() offer an interactive first-run prompt for GITLAB_URL +
+    GITLAB_TOKEN instead of just failing.
+    """
+
+
 # Default model per provider. User can override via <PROVIDER>_MODEL env var.
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-4-7",
@@ -220,7 +228,10 @@ def load_config() -> Config:
 
     token = os.environ.get("GITLAB_TOKEN", "").strip()
     if not token:
-        raise RuntimeError("GITLAB_TOKEN is not set. Copy .env.example to .env and fill it in.")
+        raise GitLabNotConfigured(
+            "GITLAB_TOKEN is not set. Run the agent interactively to configure it, "
+            "or add GITLAB_URL and GITLAB_TOKEN to your .env."
+        )
     if token.startswith(("-", " ")) or " " in token:
         _log.warning("GITLAB_TOKEN has suspicious whitespace around it — stripped, but check your .env.")
         token = token.strip()

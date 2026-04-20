@@ -9,7 +9,13 @@ from pathlib import Path
 from gitlab.exceptions import GitlabCreateError, GitlabHttpError
 from gitlab.v4.objects import Project
 
-from .config import DEFAULT_MODELS, Config, LLMNotConfigured, load_config
+from .config import (
+    DEFAULT_MODELS,
+    Config,
+    GitLabNotConfigured,
+    LLMNotConfigured,
+    load_config,
+)
 from .gitlab_client import GitLabClient, MissingScopeError
 from .llm_provider import (
     SUPPORTED_PROVIDERS,
@@ -173,26 +179,19 @@ def _explain_write_failure(project: Project, default_branch: str | None, exc: Ba
     return "\n".join(line for line in lines if line is not None)
 
 
-def _persist_llm_to_env(provider: str, api_key: str, model: str) -> Path:
-    """Write LLM_PROVIDER / LLM_API_KEY / LLM_MODEL to .env (preserving other lines).
+def _persist_env_vars(updates: dict[str, str], section_header: str) -> Path:
+    """Write key=value pairs to .env (preserving other lines).
 
-    - Updates in place if the keys already exist.
-    - Appends them under a clear header if not.
-    - Creates .env if it doesn't exist yet.
-    - Also updates os.environ so a subsequent load_config() in the same process
-      picks up the new values.
+    - Updates in place if keys already exist.
+    - Appends missing keys under `section_header`.
+    - Creates .env if absent.
+    - Also updates os.environ so a subsequent load_config() sees new values.
     """
     env_path = ROOT / ".env"
     if env_path.exists():
         lines = env_path.read_text(encoding="utf-8").splitlines()
     else:
         lines = []
-
-    updates = {
-        "LLM_PROVIDER": provider,
-        "LLM_API_KEY": api_key,
-        "LLM_MODEL": model,
-    }
 
     seen: set[str] = set()
     for i, line in enumerate(lines):
@@ -208,17 +207,59 @@ def _persist_llm_to_env(provider: str, api_key: str, model: str) -> Path:
     if missing:
         if lines and lines[-1].strip() != "":
             lines.append("")
-        lines.append("# ─── LLM (persisted by the agent) ───")
+        lines.append(section_header)
         for k in missing:
             lines.append(f"{k}={updates[k]}")
 
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    os.environ["LLM_PROVIDER"] = provider
-    os.environ["LLM_API_KEY"] = api_key
-    os.environ["LLM_MODEL"] = model
+    for k, v in updates.items():
+        os.environ[k] = v
 
     return env_path
+
+
+def _persist_gitlab_to_env(url: str, token: str) -> Path:
+    return _persist_env_vars(
+        {"GITLAB_URL": url, "GITLAB_TOKEN": token},
+        "# ─── GitLab (persisted by the agent) ───",
+    )
+
+
+def _interactive_setup_gitlab() -> bool:
+    """Prompt for GITLAB_URL + GITLAB_TOKEN, persist to .env. Returns True if saved."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return False
+    try:
+        default_url = "https://gitlab.com"
+        url = input(f"GitLab URL (blank for '{default_url}'): ").strip() or default_url
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        url = url.rstrip("/")
+
+        token = _masked_input("Paste your GitLab Personal Access Token, then press Enter: ").strip()
+        if not token:
+            print("  No token entered — cancelling.")
+            return False
+
+        env_path = _persist_gitlab_to_env(url, token)
+        try:
+            rel = env_path.relative_to(ROOT)
+        except ValueError:
+            rel = env_path
+        print(f"\n✓ Saved GITLAB_URL and GITLAB_TOKEN to {rel}.\n")
+        return True
+    except (KeyboardInterrupt, EOFError):
+        print()
+        return False
+
+
+def _persist_llm_to_env(provider: str, api_key: str, model: str) -> Path:
+    """Write LLM_PROVIDER / LLM_API_KEY / LLM_MODEL to .env (preserving other lines)."""
+    return _persist_env_vars(
+        {"LLM_PROVIDER": provider, "LLM_API_KEY": api_key, "LLM_MODEL": model},
+        "# ─── LLM (persisted by the agent) ───",
+    )
 
 
 def _interactive_setup_provider(excluded: str | None = None) -> LLMProvider | None:
@@ -508,22 +549,41 @@ class ReadmeAgent:
 
 
 def main() -> int:
-    try:
-        cfg = load_config()
-    except LLMNotConfigured as e:
-        # First run (or .env missing LLM creds) — offer interactive setup.
-        if sys.stdin.isatty() and sys.stdout.isatty():
-            print("\n─── First-time setup ───────────────────────────────────────")
-            print("No LLM provider configured. Pick one and paste your API key;")
-            print("the agent will save it to .env so it's used automatically from")
-            print("now on. You'll only be prompted again if the key stops working.\n")
-            if _interactive_setup_provider() is None:
-                print("\nSetup cancelled — nothing saved.")
-                return 4
-            cfg = load_config()  # reload with the freshly-persisted values
-        else:
+    # Two-stage config load: GitLab creds first (because GitLabNotConfigured
+    # blocks even reaching the LLM check), then LLM creds. Each raises a
+    # dedicated exception so we can offer a targeted interactive prompt.
+    for _attempt in range(3):
+        try:
+            cfg = load_config()
+            break
+        except GitLabNotConfigured as e:
+            if sys.stdin.isatty() and sys.stdout.isatty():
+                print("\n─── First-time GitLab setup ────────────────────────────────")
+                print("No GitLab credentials configured. Enter your GitLab URL and")
+                print("Personal Access Token; the agent will save them to .env so")
+                print("future runs pick them up automatically.\n")
+                if not _interactive_setup_gitlab():
+                    print("\nSetup cancelled — nothing saved.")
+                    return 4
+                continue  # reload
             print(str(e))
             return 4
+        except LLMNotConfigured as e:
+            if sys.stdin.isatty() and sys.stdout.isatty():
+                print("\n─── First-time LLM setup ───────────────────────────────────")
+                print("No LLM provider configured. Pick one and paste your API key;")
+                print("the agent will save it to .env so it's used automatically from")
+                print("now on. You'll only be prompted again if the key stops working.\n")
+                if _interactive_setup_provider() is None:
+                    print("\nSetup cancelled — nothing saved.")
+                    return 4
+                continue  # reload
+            print(str(e))
+            return 4
+    else:
+        # Couldn't load even after three setup passes.
+        print("Configuration still incomplete after setup — aborting.")
+        return 4
 
     try:
         agent = ReadmeAgent(cfg)
