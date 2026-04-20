@@ -197,6 +197,46 @@ class GitLabClient:
             }
         )
 
+    def is_empty_repo(self, project: Project) -> bool:
+        """True if the project has no real branches (despite default_branch maybe being set).
+
+        Self-hosted GitLab will sometimes report a default_branch on a freshly
+        created project that has zero commits. We need to know this so we can
+        choose the 'create the very first commit' code path.
+        """
+        try:
+            return not bool(project.branches.list(per_page=1, get_all=False))
+        except GitlabHttpError:
+            return False
+
+    def create_initial_commit_with_readme(
+        self,
+        project: Project,
+        branch: str,
+        content: str,
+        commit_message: str,
+        author_name: str,
+        author_email: str,
+        filename: str = "README.md",
+    ) -> None:
+        """Create the very first commit on `branch` via the commits API.
+
+        Used when the repo is empty: there is no branch to push to and no `ref`
+        to base a feature branch from. GitLab's commits-with-actions endpoint
+        will create the branch as part of the first commit.
+        """
+        project.commits.create(
+            {
+                "branch": branch,
+                "commit_message": commit_message,
+                "author_name": author_name,
+                "author_email": author_email,
+                "actions": [
+                    {"action": "create", "file_path": filename, "content": content},
+                ],
+            }
+        )
+
     def create_readme_via_mr(
         self,
         project: Project,

@@ -15,6 +15,14 @@ ROOT = Path(__file__).resolve().parent.parent
 _log = logging.getLogger("readme_agent")
 
 
+class LLMNotConfigured(RuntimeError):
+    """Raised when .env has no usable LLM provider/key pair.
+
+    Distinguished from generic RuntimeError so main() can offer an interactive
+    first-run setup instead of just printing and exiting.
+    """
+
+
 # Default model per provider. User can override via <PROVIDER>_MODEL env var.
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-4-7",
@@ -173,14 +181,14 @@ def _resolve_llm() -> tuple[str, str, str]:
     if explicit:
         key = legacy_keys[explicit]
         if not key:
-            raise RuntimeError(_no_key_message(forced=explicit))
+            raise LLMNotConfigured(_no_key_message(forced=explicit))
         return explicit, key, legacy_model(explicit)
 
     for provider in SUPPORTED_PROVIDERS:
         if legacy_keys[provider]:
             return provider, legacy_keys[provider], legacy_model(provider)
 
-    raise RuntimeError(_no_key_message())
+    raise LLMNotConfigured(_no_key_message())
 
 
 def _no_key_message(forced: str | None = None) -> str:
